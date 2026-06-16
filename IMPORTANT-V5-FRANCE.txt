@@ -1,0 +1,23 @@
+VERSION V5 - FRANCE ENTIERE ROBUSTE
+
+Cette version ne cherche plus seulement par code postal/departement.
+Elle cherche directement les stations dans un rayon GPS autour de la ville.
+
+Elle utilise :
+- geo.api.gouv.fr pour trouver le centre de la ville
+- data.economie.gouv.fr pour les prix officiels dans un rayon GPS
+- Overpass/OpenStreetMap pour récupérer les enseignes autour des stations
+
+Exemples :
+/api/carburants?q=Paris&fuel=e10
+/api/carburants?q=Amiens&fuel=e10
+/api/carburants?q=Lyon&fuel=gazole
+/api/carburants?q=Marseille&fuel=sp95
+/api/carburants?q=02700&fuel=e10
+
+La réponse JSON donne :
+rowsFoundBeforeFuelFilter
+osmStationsFound
+radiusKm
+
+Si ça ne marche pas, copie la réponse JSON.
