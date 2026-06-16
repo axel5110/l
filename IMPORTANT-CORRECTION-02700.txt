@@ -1,0 +1,9 @@
+CORRECTION 02700 / TERGNIER
+
+Avant, l'API cherchait seulement le code postal 02700.
+Maintenant, pour 02700 ou Tergnier, elle cherche aussi :
+- 02700
+- 02300
+- 02800
+
+Si le carburant choisi n'existe pas dans les stations trouvées, le site affiche automatiquement les stations proches avec un autre carburant disponible.

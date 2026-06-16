@@ -1,0 +1,4 @@
+Version avec prix + noms + distance + carte.
+Déploiement Cloudflare Workers Builds avec npx wrangler deploy.
+Tous les fichiers sont à la racine, aucun sous-dossier.
+Ne garde pas node_modules, _worker.js ou functions dans GitHub.

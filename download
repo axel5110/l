@@ -1,0 +1,14 @@
+server.js
+wrangler.jsonc
+node_modules
+node_modules/**
+package.json
+bun.lock
+bun.lockb
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.zip
+README*
+A-LIRE*
+IMPORTANT*
