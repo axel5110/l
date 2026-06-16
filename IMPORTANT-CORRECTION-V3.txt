@@ -1,0 +1,13 @@
+CORRECTION V3
+
+Si la recherche par code postal retourne 0 station, l'API cherche maintenant le département complet.
+Exemple :
+02700 -> cherche 02700, 02300, 02800 puis département 02 si besoin.
+Ensuite le serveur filtre les stations proches par distance.
+
+La réponse JSON affiche aussi :
+rowsFoundBeforeFuelFilter
+departments
+fallbackFuel
+
+Ça aide à vérifier d'où vient le problème.
