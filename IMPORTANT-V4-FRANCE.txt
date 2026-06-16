@@ -1,0 +1,19 @@
+VERSION V4 - FRANCE ENTIERE
+
+Objectif :
+- fonctionner pour toutes les villes de France
+- afficher prix
+- afficher distance
+- afficher carte
+- améliorer les noms des stations : TotalEnergies, Auchan, E.Leclerc, Intermarché, Carrefour...
+
+Fonctionnement :
+1. Recherche les codes postaux de la ville.
+2. Recherche aussi le département pour trouver les stations autour.
+3. Filtre par distance depuis le centre de la ville ou la position utilisateur.
+4. Tente d'enrichir le nom avec OpenStreetMap autour des coordonnées de la station.
+5. Si impossible, affiche un nom déduit ou l'adresse.
+
+IMPORTANT :
+Supprime l'ancien contenu GitHub avant d'envoyer cette version.
+Ne garde pas node_modules, _worker.js, functions, anciens ZIP.

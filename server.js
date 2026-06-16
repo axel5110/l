@@ -3,6 +3,7 @@ const DATA_API = "https://data.economie.gouv.fr/api/explore/v2.1/catalog/dataset
 const GEO_COMMUNES = "https://geo.api.gouv.fr/communes";
 const NOMINATIM_REVERSE = "https://nominatim.openstreetmap.org/reverse";
 const STATION_PAGE = "https://www.prix-carburants.gouv.fr/station/";
+const OVERPASS_API = "https://overpass-api.de/api/interpreter";
 
 const FUEL_FIELDS = {
   gazole: { price: ["prix_gazole", "gazole_prix", "price_gazole"], update: ["maj_gazole", "gazole_maj"], label: "Gazole" },
@@ -14,6 +15,26 @@ const FUEL_FIELDS = {
 };
 
 const PARIS_CP = Array.from({ length: 20 }, (_, i) => `750${String(i + 1).padStart(2, "0")}`);
+
+const BRAND_PATTERNS = [
+  { brand: "TotalEnergies", keys: ["totalenergies", "total energies", "total energie", "total énergie", "total access", "total"] },
+  { brand: "E.Leclerc", keys: ["e.leclerc", "e leclerc", "leclerc"] },
+  { brand: "Intermarché", keys: ["intermarché", "intermarche", "inter marché"] },
+  { brand: "Carrefour", keys: ["carrefour"] },
+  { brand: "Auchan", keys: ["auchan"] },
+  { brand: "Super U", keys: ["super u", "hyper u", "u express", "systeme u", "système u"] },
+  { brand: "Avia", keys: ["avia"] },
+  { brand: "Esso", keys: ["esso"] },
+  { brand: "Shell", keys: ["shell"] },
+  { brand: "BP", keys: ["bp"] },
+  { brand: "ENI", keys: ["eni", "agip"] },
+  { brand: "Dyneff", keys: ["dyneff"] },
+  { brand: "Netto", keys: ["netto"] },
+  { brand: "Casino", keys: ["casino"] },
+  { brand: "Cora", keys: ["cora"] },
+  { brand: "Système U", keys: ["système u", "systeme u"] }
+];
+
 const clean = (v) => String(v ?? "").replace(/[<>"']/g, "").trim();
 const normalize = (v) => clean(v).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const escapeWhere = (v) => clean(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -23,7 +44,7 @@ function json(data, status = 200) {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "public, max-age=120",
+      "Cache-Control": "public, max-age=180",
       "Access-Control-Allow-Origin": "*"
     }
   });
@@ -42,7 +63,6 @@ function getPrice(row, fuel) {
   let n = Number(String(value ?? "").replace(",", "."));
   if (Number.isFinite(n) && n > 0) return n;
 
-  // Fallback vieux formats : prix sous forme de tableau/objet
   const arrays = [row.prix, row.prices, row.carburants].filter(Boolean);
   for (const arr of arrays) {
     const list = Array.isArray(arr) ? arr : [arr];
@@ -56,7 +76,6 @@ function getPrice(row, fuel) {
       }
     }
   }
-
   return null;
 }
 
@@ -102,16 +121,9 @@ function formatDate(value) {
 
 function detectBrand(text) {
   const t = normalize(text);
-  if (t.includes("leclerc")) return "E.Leclerc";
-  if (t.includes("intermarche")) return "Intermarché";
-  if (t.includes("carrefour")) return "Carrefour";
-  if (t.includes("auchan")) return "Auchan";
-  if (t.includes("total")) return "TotalEnergies";
-  if (t.includes("avia")) return "Avia";
-  if (t.includes("esso")) return "Esso";
-  if (t.includes("shell")) return "Shell";
-  if (t.includes("bp")) return "BP";
-  if (t.includes("u express") || t.includes("super u") || t.includes("hyper u")) return "U";
+  for (const rule of BRAND_PATTERNS) {
+    if (rule.keys.some(k => t.includes(normalize(k)))) return rule.brand;
+  }
   return "";
 }
 
@@ -134,15 +146,21 @@ function extractOfficialName(html) {
     /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,
     /<title[^>]*>([\s\S]*?)<\/title>/i
   ];
+
   for (const pattern of patterns) {
     const m = html.match(pattern);
     if (m && m[1]) {
-      const name = stripHtml(m[1])
+      const raw = stripHtml(m[1]);
+      const brand = detectBrand(raw);
+      if (brand) return brand;
+
+      const name = raw
         .replace(/Prix des carburants/gi, "")
         .replace(/prix-carburants\.gouv\.fr/gi, "")
         .replace(/Station-service/gi, "")
         .replace(/^[-|–]+|[-|–]+$/g, "")
         .trim();
+
       if (name.length >= 3) return name;
     }
   }
@@ -162,11 +180,49 @@ async function getOfficialName(id) {
   }
 }
 
+async function getOsmStationName(lat, lon) {
+  if (!lat || !lon) return "";
+  try {
+    const query = `
+      [out:json][timeout:8];
+      (
+        node["amenity"="fuel"](around:250,${lat},${lon});
+        way["amenity"="fuel"](around:250,${lat},${lon});
+        relation["amenity"="fuel"](around:250,${lat},${lon});
+      );
+      out center tags 5;
+    `;
+    const r = await fetch(OVERPASS_API, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain", "User-Agent": "Carburio/1.0 (+https://carburio.com)" },
+      body: query
+    });
+    if (!r.ok) return "";
+    const data = await r.json();
+    const candidates = data.elements || [];
+    for (const el of candidates) {
+      const tags = el.tags || {};
+      const text = [tags.brand, tags.name, tags.operator].filter(Boolean).join(" ");
+      const brand = detectBrand(text);
+      if (brand) return brand;
+      if (tags.brand) return clean(tags.brand);
+      if (tags.name) return clean(tags.name);
+      if (tags.operator) return clean(tags.operator);
+    }
+  } catch {}
+  return "";
+}
+
 function fallbackName(row) {
   const direct = clean(row.nom_station || row.nom || row.enseigne || row.marque || row.name);
-  if (direct) return direct;
+  if (direct) {
+    const brand = detectBrand(direct);
+    return brand || direct;
+  }
+
   const brand = detectBrand([row.adresse, row.ville, row.services_service, row.horaires_jour].flat().join(" "));
   if (brand) return brand;
+
   if (row.adresse) return `Station-service – ${clean(row.adresse)}`;
   if (row.ville) return `Station-service – ${clean(row.ville)}`;
   return "Station-service";
@@ -184,48 +240,51 @@ async function postcodesFromCity(q) {
   const n = normalize(query);
 
   if (query === "02700" || n.includes("tergnier")) {
-    return { codes: ["02700", "02300", "02800"], depts: ["02"], center: { lat: 49.6566, lon: 3.2870 }, radiusKm: 35 };
+    return { codes: ["02700", "02300", "02800"], depts: ["02"], center: { lat: 49.6566, lon: 3.2870 }, radiusKm: 40 };
   }
 
   if (query === "02300" || n.includes("chauny") || n.includes("viry-noureuil")) {
-    return { codes: ["02300", "02700", "02800"], depts: ["02"], center: { lat: 49.615, lon: 3.218 }, radiusKm: 35 };
+    return { codes: ["02300", "02700", "02800"], depts: ["02"], center: { lat: 49.615, lon: 3.218 }, radiusKm: 40 };
   }
 
   if (query === "02800" || n.includes("beautor") || n.includes("la fere") || n.includes("la-fere")) {
-    return { codes: ["02800", "02700", "02300"], depts: ["02"], center: { lat: 49.652, lon: 3.345 }, radiusKm: 35 };
+    return { codes: ["02800", "02700", "02300"], depts: ["02"], center: { lat: 49.652, lon: 3.345 }, radiusKm: 40 };
   }
 
-  if (n === "paris") return { codes: PARIS_CP, depts: ["75"], center: { lat: 48.8566, lon: 2.3522 }, radiusKm: 15 };
+  if (n === "paris") return { codes: PARIS_CP, depts: ["75"], center: { lat: 48.8566, lon: 2.3522 }, radiusKm: 18 };
 
   if (/^\d{5}$/.test(query)) {
-    return { codes: [query], depts: [deptFromPostcode(query)].filter(Boolean), center: null, radiusKm: 35 };
+    return { codes: [query], depts: [deptFromPostcode(query)].filter(Boolean), center: null, radiusKm: 45 };
   }
 
   const params = new URLSearchParams({
     nom: query,
-    fields: "nom,codesPostaux,centre",
+    fields: "nom,codesPostaux,centre,codeDepartement",
     boost: "population",
-    limit: "5"
+    limit: "8"
   });
 
   const r = await fetch(`${GEO_COMMUNES}?${params.toString()}`, { headers: { "Accept": "application/json" } });
-  if (!r.ok) return { codes: [], depts: [], center: null, radiusKm: 35 };
+  if (!r.ok) return { codes: [], depts: [], center: null, radiusKm: 45 };
 
   const data = await r.json();
   const codes = [];
+  const depts = [];
   let center = null;
 
   for (const commune of data) {
     if (!center && commune.centre?.coordinates?.length === 2) {
       center = { lon: commune.centre.coordinates[0], lat: commune.centre.coordinates[1] };
     }
+    if (commune.codeDepartement && !depts.includes(commune.codeDepartement)) depts.push(commune.codeDepartement);
     for (const cp of commune.codesPostaux || []) {
       if (!codes.includes(cp)) codes.push(cp);
+      const d = deptFromPostcode(cp);
+      if (d && !depts.includes(d)) depts.push(d);
     }
   }
 
-  const depts = [...new Set(codes.map(deptFromPostcode).filter(Boolean))];
-  return { codes: codes.slice(0, 20), depts, center, radiusKm: 35 };
+  return { codes: codes.slice(0, 30), depts: depts.slice(0, 4), center, radiusKm: 45 };
 }
 
 async function postcodeFromPosition(lat, lon) {
@@ -269,19 +328,28 @@ async function fetchRows(where, limit = 100) {
 }
 
 async function fetchRowsSmart(geo) {
-  let rows = [];
+  const all = [];
+  const seen = new Set();
 
-  // 1. Recherche par codes postaux exacts
+  async function addRows(rows) {
+    for (const row of rows) {
+      const id = clean(row.id || `${row.adresse}-${row.cp}-${row.ville}`);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      all.push(row);
+    }
+  }
+
+  // On cherche TOUJOURS les CP exacts, puis le département pour que toutes les villes de France aient des résultats proches.
   if (geo.codes?.length) {
-    rows = await fetchRows(buildWhereByPostcodes(geo.codes), 100);
+    await addRows(await fetchRows(buildWhereByPostcodes(geo.codes), 100));
   }
 
-  // 2. Si aucun résultat, recherche par département, puis filtrage distance côté serveur
-  if ((!rows || !rows.length) && geo.depts?.length) {
-    rows = await fetchRows(buildWhereByDepts(geo.depts), 100);
+  if (geo.depts?.length) {
+    await addRows(await fetchRows(buildWhereByDepts(geo.depts), 100));
   }
 
-  return rows || [];
+  return all;
 }
 
 async function apiCarburants(request) {
@@ -305,15 +373,15 @@ async function apiCarburants(request) {
   if (!origin && geo.center) origin = geo.center;
 
   const rows = await fetchRowsSmart(geo);
-  const seen = new Set();
 
   async function buildResultsForFuel(chosenFuel) {
-    const built = await Promise.all(rows.filter(row => {
+    const seen = new Set();
+    let base = rows.filter(row => {
       const id = clean(row.id || `${row.adresse}-${row.cp}-${row.ville}`);
-      if (seen.has(chosenFuel + id)) return false;
-      seen.add(chosenFuel + id);
+      if (seen.has(id)) return false;
+      seen.add(id);
       return true;
-    }).map(async row => {
+    }).map(row => {
       const price = getPrice(row, chosenFuel);
       if (!price) return null;
 
@@ -322,12 +390,11 @@ async function apiCarburants(request) {
 
       if (origin && distanceKm !== null && geo.radiusKm && distanceKm > geo.radiusKm) return null;
 
-      const official = row.id && rows.length <= 25 ? await getOfficialName(row.id) : "";
-
       return {
+        row,
         id: clean(row.id),
-        name: official || fallbackName(row),
-        nameSource: official ? "Nom officiel" : "Nom déduit",
+        name: fallbackName(row),
+        nameSource: "Nom déduit",
         address: clean(row.adresse),
         cp: clean(row.cp),
         city: clean(row.ville),
@@ -340,12 +407,28 @@ async function apiCarburants(request) {
         distanceKm,
         distanceText: formatDistance(distanceKm)
       };
-    }));
-
-    return built.filter(Boolean).sort((a, b) => {
+    }).filter(Boolean).sort((a, b) => {
       if (origin && a.distanceKm !== null && b.distanceKm !== null) return a.distanceKm - b.distanceKm;
       return a.price - b.price;
     }).slice(0, 20);
+
+    // Enrichissement noms : OSM d'abord, puis page officielle si peu de résultats.
+    base = await Promise.all(base.map(async item => {
+      let enriched = "";
+      if (item.lat && item.lon) enriched = await getOsmStationName(item.lat, item.lon);
+      if (!enriched && item.id && base.length <= 12) enriched = await getOfficialName(item.id);
+
+      if (enriched) {
+        return {
+          ...item,
+          name: enriched,
+          nameSource: detectBrand(enriched) ? "Enseigne" : "Nom station"
+        };
+      }
+      return item;
+    }));
+
+    return base.map(({ row, ...item }) => item);
   }
 
   let results = await buildResultsForFuel(fuel);
